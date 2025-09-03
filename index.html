@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minecraft Domain → IP Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 text-slate-900">
+    <div class="max-w-6xl mx-auto p-6">
+      <header class="mb-8">
+        <h1 class="text-3xl md:text-4xl font-bold tracking-tight">Minecraft Domain → IP Analyzer</h1>
+        <p class="text-slate-600 mt-2">
+          Enter a Minecraft server hostname to resolve it to IP addresses and query detailed status information using multiple APIs. Each API source is shown separately so you can compare their results.
+        </p>
+      </header>
+
+      <form id="resolver-form" class="grid gap-3 md:grid-cols-[1fr_auto] items-center bg-white rounded-2xl p-4 shadow">
+        <input id="host-input" class="w-full rounded-xl border p-3 outline-none focus:ring-2 focus:ring-slate-400" placeholder="e.g. play.example.net" />
+        <button type="submit" id="resolve-btn" class="mt-2 md:mt-0 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 shadow">
+          Resolve
+        </button>
+      </form>
+
+      <div id="error" class="hidden mt-4 p-4 rounded-xl bg-red-50 text-red-800 border border-red-200"></div>
+      <div id="results" class="hidden mt-6 bg-white rounded-2xl shadow divide-y"></div>
+
+      <footer class="mt-10 text-xs text-slate-500">
+        Uses DNS-over-HTTPS and multiple Minecraft status APIs. Some servers may block queries or use proxy/DDoS protection. Each section corresponds to a different API.
+      </footer>
+    </div>
+
+    <script>
+      const form = document.getElementById('resolver-form');
+      const input = document.getElementById('host-input');
+      const btn = document.getElementById('resolve-btn');
+      const results = document.getElementById('results');
+      const errorBox = document.getElementById('error');
+
+      async function doh(name, type) {
+        const url = `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
+        const r = await fetch(url, { headers: { 'accept': 'application/dns-json' } });
+        if (!r.ok) throw new Error(`DNS query failed (${r.status})`);
+        return r.json();
+      }
+
+      function parseAnswers(answers, type) {
+        if (!answers) return [];
+        return answers.map(a => {
+          if (type === 'SRV' && a.type === 33) return a.data;
+          if (type === 'A' && a.type === 1) return a.data;
+          if (type === 'AAAA' && a.type === 28) return a.data;
+          if (type === 'CNAME' && a.type === 5) return a.data;
+        }).filter(Boolean);
+      }
+
+      async function queryAPIs(host, port) {
+        const apis = [
+          `https://api.mcsrvstat.us/2/${host}:${port}`,
+          `https://api.minetools.eu/ping/${host}/${port}`,
+          `https://mc-api.co/v1/ping/${host}:${port}`,
+          `https://mcapi.tcmod.xyz/${host}:${port}`
+        ];
+
+        const allResults = [];
+        for (const url of apis) {
+          try {
+            const r = await fetch(url);
+            if (r.ok) {
+              const json = await r.json();
+              allResults.push({ url, data: json });
+            }
+          } catch {}
+        }
+        return allResults;
+      }
+
+      function extractInfo(apiResult) {
+        const d = apiResult.data;
+        let infoHtml = '';
+
+        if (d?.hostname) infoHtml += `<div class="mt-2"><span class="font-semibold">Reported Hostname:</span> ${d.hostname}</div>`;
+        if (d?.ip) infoHtml += `<div class="mt-2"><span class="font-semibold">Reported IP:</span> ${d.ip}</div>`;
+        if (d?.port) infoHtml += `<div class="mt-2"><span class="font-semibold">Reported Port:</span> ${d.port}</div>`;
+        if (d?.motd?.clean || d?.motd?.text) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">MOTD:</span> ${d.motd.clean || d.motd.text}</div>`;
+        }
+        if (d?.version?.name || d?.version) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Version:</span> ${d.version.name || d.version}</div>`;
+        }
+        if (d?.protocol) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Protocol:</span> ${d.protocol}</div>`;
+        }
+        if (d?.software) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Software:</span> ${d.software}</div>`;
+        }
+        if (d?.players?.online !== undefined) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Players:</span> ${d.players.online} / ${d.players.max}</div>`;
+          if (d.players.sample) {
+            infoHtml += `<ul class="list-disc ml-6 text-sm mt-1">${d.players.sample.map(p => `<li>${p.name} (${p.id})</li>`).join('')}</ul>`;
+          }
+        }
+        if (d?.plugins) {
+          const plugins = Array.isArray(d.plugins) ? d.plugins : Object.keys(d.plugins);
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Plugins:</span> ${plugins.join(', ')}</div>`;
+        }
+        if (d?.mods) {
+          const mods = Array.isArray(d.mods) ? d.mods : Object.keys(d.mods);
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Mods:</span> ${mods.join(', ')}</div>`;
+        }
+        if (d?.map) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Map:</span> ${d.map}</div>`;
+        }
+        if (d?.gamemode) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Gamemode:</span> ${d.gamemode}</div>`;
+        }
+        if (d?.favicon) {
+          infoHtml += `<div class="mt-2"><span class="font-semibold">Icon:</span><br><img src="${d.favicon}" alt="Server Icon" class="w-16 h-16 mt-1 rounded shadow" /></div>`;
+        }
+
+        return infoHtml;
+      }
+
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        results.classList.add('hidden');
+        errorBox.classList.add('hidden');
+        errorBox.textContent = '';
+        btn.disabled = true;
+        btn.textContent = 'Resolving…';
+
+        const inputHost = input.value.trim().replace(/^minecraft:\/\//i, '');
+        if (!inputHost) {
+          errorBox.textContent = 'Please enter a host';
+          errorBox.classList.remove('hidden');
+          btn.disabled = false;
+          btn.textContent = 'Resolve';
+          return;
+        }
+
+        try {
+          const srvName = `_minecraft._tcp.${inputHost.replace(/\.$/, '')}`;
+          let port = 25565;
+          let finalTarget = inputHost;
+          let srvTarget;
+
+          try {
+            const srvResp = await doh(srvName, 'SRV');
+            const srv = parseAnswers(srvResp.Answer, 'SRV')[0];
+            if (srv) {
+              const parts = srv.split(/\s+/);
+              const p = Number(parts[2]);
+              const t = parts[3]?.replace(/\.$/, '');
+              if (t && Number.isFinite(p)) {
+                port = p;
+                finalTarget = t;
+                srvTarget = t;
+              }
+            }
+          } catch {}
+
+          const [aResp, aaaaResp] = await Promise.allSettled([
+            doh(finalTarget, 'A'),
+            doh(finalTarget, 'AAAA')
+          ]);
+          const ipv4 = aResp.status === 'fulfilled' ? parseAnswers(aResp.value.Answer, 'A') : [];
+          const ipv6 = aaaaResp.status === 'fulfilled' ? parseAnswers(aaaaResp.value.Answer, 'AAAA') : [];
+
+          const apis = await queryAPIs(finalTarget, port);
+
+          results.innerHTML = `
+            <div class="p-4">
+              <div class="text-sm text-slate-500">Resolved Host</div>
+              <div class="font-semibold text-lg">${finalTarget}</div>
+              <div class="text-sm mt-1">Port: <span class="font-semibold">${port}</span></div>
+              ${srvTarget ? `<div class="text-sm text-slate-600">SRV target: <code>${srvTarget}</code></div>` : ''}
+              <div class="mt-3">
+                <div class="font-semibold mb-1">IPv4 (A)</div>
+                ${ipv4.length ? `<ul class="list-disc ml-5">${ipv4.map(ip => `<li><code>${ip}</code></li>`).join('')}</ul>` : '<div class="text-slate-500 text-sm">No A records</div>'}
+              </div>
+              <div class="mt-3">
+                <div class="font-semibold mb-1">IPv6 (AAAA)</div>
+                ${ipv6.length ? `<ul class="list-disc ml-5">${ipv6.map(ip => `<li><code>${ip}</code></li>`).join('')}</ul>` : '<div class="text-slate-500 text-sm">No AAAA records</div>'}
+              </div>
+            </div>
+            <div class="divide-y">
+              ${apis.map(api => `
+                <div class="p-4">
+                  <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">API Source</div>
+                  <div class="text-sm text-slate-500 mb-2">${api.url}</div>
+                  ${extractInfo(api)}
+                  <details class="mt-2">
+                    <summary class="cursor-pointer text-sm text-slate-600">Raw JSON</summary>
+                    <pre class="mt-1 text-xs bg-slate-100 rounded p-2 overflow-x-auto">${JSON.stringify(api.data, null, 2)}</pre>
+                  </details>
+                </div>`).join('')}
+            </div>`;
+
+          results.classList.remove('hidden');
+        } catch (err) {
+          errorBox.textContent = err.message || 'Error resolving host.';
+          errorBox.classList.remove('hidden');
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Resolve';
+      });
+    </script>
+  </body>
+</html>
