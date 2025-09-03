@@ -1,2 +1,2 @@
 # MC-Domain-Resolver
-An Domain Resolver for Minecraft using multiple APIs
+An Domain Resolver for Minecraft using multiple APIs.
