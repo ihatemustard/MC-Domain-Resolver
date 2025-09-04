@@ -72,7 +72,7 @@
         const [ipwhois, ipapi, bgp] = await Promise.all([
           fetchJSON(`https://ipwhois.app/json/${ip}`),
           fetchJSON(`https://ip-api.com/json/${ip}?fields=status,message,continent,country,regionName,city,lat,lon,isp,org,as,asname,reverse,hosting,proxy,query`),
-          fetchJSON(`https://api.bgpview.io/ip/${ip}`)
+          fetchJSON(`https://bgp.tools/prefix/${ip}`)
         ]);
         return { ipwhois, ipapi, bgp };
       }
